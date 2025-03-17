@@ -1,9 +1,7 @@
 /calibrate_position:
   ros__parameters:
-    time_space: 100
-    date_length: 100
-    # data_dir: "../../../../src/calibrate_position/data.txt"
-    # data_dir: "package://ros2_galaxy_camera/data.txt"
-    armors_topic: /detector/armors
-    gimbal_frame: gimbal_link
-    world_frame: odom
+    time_space: 10 #数据采样时间间隔(ms)，越大采集时间越长，但是数据类型越多
+    date_length: 1000  #用于计算的数据的数量，越多越好
+    armors_topic: /detector/armors #检测器发布装甲板的话题
+    gimbal_frame: gimbal_link #云台坐标系
+    world_frame: odom #世界坐标系

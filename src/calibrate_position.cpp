@@ -21,26 +21,6 @@ CalibratePosition::CalibratePosition(const rclcpp::NodeOptions & options)
     tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
     static_tf_broadcaster_ = std::make_shared<tf2_ros::StaticTransformBroadcaster>(this);
 
-    // 创建ros和opencv的 TF变换
-    geometry_msgs::msg::TransformStamped transform;
-    transform.header.stamp = this->now();
-    transform.header.frame_id = "ros_frame";
-    transform.child_frame_id = "opencv_frame";
-    
-    transform.transform.translation.x = 0;
-    transform.transform.translation.y = 0;
-    transform.transform.translation.z = 0;
-    
-    tf2::Quaternion q;
-    q.setRPY(-CV_PI/2, 0,-CV_PI/2);  
-    transform.transform.rotation.x = q.x();
-    transform.transform.rotation.y = q.y();
-    transform.transform.rotation.z = q.z();
-    transform.transform.rotation.w = q.w();
-    
-    // 广播TF
-    static_tf_broadcaster_->sendTransform(transform);
-
     // 订阅自定义消息
     armors_sub_ = this->create_subscription<auto_aim_interfaces::msg::Armors>(
         armors_topic, rclcpp::SensorDataQoS(),
@@ -60,8 +40,8 @@ void CalibratePosition::msgCallBack(const auto_aim_interfaces::msg::Armors& armo
     try {
         // 尝试获取插值后的 TF 变换
         transform = tf_buffer_->lookupTransform(
-            gimbal_frame,   //目标坐标系
-            world_frame,   //源坐标系
+            world_frame,    //目标坐标系
+            gimbal_frame,   //源坐标系
             armors_msg.header.stamp,
             std::chrono::duration<int>(1) 
         );
@@ -81,48 +61,20 @@ void CalibratePosition::msgCallBack(const auto_aim_interfaces::msg::Armors& armo
     // transform.child_frame_id = "test_frame";
     // tf_broadcaster_->sendTransform(transform);
 
-    //转化为opencv坐标系
-    geometry_msgs::msg::PoseStamped pose;
-    pose.header.frame_id = "ros_frame";
-    pose.header.stamp = armors_msg.header.stamp;
-    pose.pose = armors_msg.armors[0].pose;
-    pose = tf_buffer_->transform(
-        pose, 
-        "opencv_frame",
-        tf2::durationFromSec(0.1) // 允许的时间差
-    );
-
     tf2::Quaternion q;
-    tf2::fromMsg(pose.pose.orientation, q);
+    tf2::fromMsg(armors_msg.armors[0].pose.orientation, q);
     tf2::Matrix3x3 tf_m;
     tf_m.setRotation(q);
 
     r_target2cam.push_back(tfmat2cvmat(tf_m));
-    t_target2cam.push_back(tfvec2cvvec(pose.pose.position));
+    t_target2cam.push_back(tfvec2cvvec(armors_msg.armors[0].pose.position));
 
-    // tf2::Transform tf_transform;
-    // tf2::fromMsg(transform.transform, tf_transform);
-    pose.pose.position.x = transform.transform.translation.x;
-    pose.pose.position.y = transform.transform.translation.y;
-    pose.pose.position.z = transform.transform.translation.z;
-    pose.pose.orientation = transform.transform.rotation;
-    // pose.pose.orientation.x = tf_transform.getRotation().;
-    // pose.pose.orientation.y = tf_transform.getRotation().y;
-    // pose.pose.orientation.z = tf_transform.getRotation().z;
-    // pose.pose.orientation.w = tf_transform.getRotation().w;
-    // pose.pose.position.x = tf_transform.getOrigin()[0];
-    // pose.pose.position.y = tf_transform.getOrigin()[1];
-    // pose.pose.position.z = tf_transform.getOrigin()[2];
-    pose = tf_buffer_->transform(
-        pose, 
-        "opencv_frame",
-        tf2::durationFromSec(0.1) // 允许的时间差
-    );
-    tf2::fromMsg(pose.pose.orientation, q);
+    tf2::Transform tf_transform;
+    tf2::fromMsg(transform.transform, tf_transform);
 
-    tf_m.setRotation(q);
+    tf_m.setRotation(tf_transform.getRotation());
     r_gripper2base.push_back(tfmat2cvmat(tf_m));
-    t_gripper2base.push_back(tfvec2cvvec(pose.pose.position));
+    t_gripper2base.push_back(tfvec2cvvec(tf_transform.getOrigin()));
 
     RCLCPP_INFO(this->get_logger(), "Get and store the data");
 
@@ -138,19 +90,6 @@ void CalibratePosition::msgCallBack(const auto_aim_interfaces::msg::Armors& armo
 
         double pitch, yaw, roll;
         auto tf_m = cvmat2tfmat(r_cam2gripper);
-        auto tf_v = cvvec2tfvec(t_cam2gripper);
-
-        pose.pose.position = tf_v;
-        pose.pose.orientation = tf2::toMsg(q);
-        pose.header.frame_id = "opencv_frame";
-        pose = tf_buffer_->transform(
-            pose, 
-            "ros_frame",
-            tf2::durationFromSec(0.1) // 允许的时间差
-        );
-
-        tf2::fromMsg(pose.pose.orientation, q);
-        tf_m.setRotation(q);
         tf_m.getRPY(roll, pitch, yaw);
 
         std::ofstream file;
@@ -159,7 +98,7 @@ void CalibratePosition::msgCallBack(const auto_aim_interfaces::msg::Armors& armo
             RCLCPP_ERROR(this->get_logger(), "Failed to open file %s!", data_dir.c_str());
         }else{
             RCLCPP_INFO(this->get_logger(), "Successed open file %s!", data_dir.c_str());
-            file << "平移向量" << std::endl << tfvec2cvvec(pose.pose.position) << std::endl;
+            file << "平移向量" << std::endl << t_cam2gripper << std::endl;
             file << "旋转欧拉角(弧度制)" << std::endl 
                 << "roll: " << roll << std::endl
                 << "pitch: " << pitch << std::endl 

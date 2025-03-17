@@ -19,8 +19,8 @@ class GimbalController : public rclcpp::Node {
 public:
     GimbalController() 
     : Node("gimbal_controller"), 
-        camera_gimbal(0.1, 0.005, 0.005, 0.1, 0.1, 0.1), 
-        armor_world_(3.0, 0.5, 0.5, 0, 0, 0),
+        camera_gimbal(0.1, 0.005, 0.005, 0.05, 0.05, 0.05), 
+        armor_world_(2.0, 0.5, 0.5, 0, 0, 0),
         gen_(rd_()),
         dist_(-0.05, 0.05)  // ±5% 均匀分布噪声
     {
