@@ -4,6 +4,8 @@
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include "tf2_ros/transform_broadcaster.h"
+
 
 #include "auto_aim_interfaces/msg/armor.hpp"
 #include "auto_aim_interfaces/msg/armors.hpp"
@@ -24,10 +26,14 @@ public:
 
 private:    
     void msgCallBack(const auto_aim_interfaces::msg::Armors& armors_msg);
+    cv::Mat sanitize_rotation(cv::Mat R);
+    tf2::Matrix3x3 cvmat2tfmat(cv::Mat cv_m);
+    cv::Mat tfmat2cvmat(tf2::Matrix3x3 R);
     
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     rclcpp::Subscription<auto_aim_interfaces::msg::Armors>::SharedPtr armors_sub_;
+    std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
     std::vector<cv::Mat>
         r_gripper2base, t_gripper2base,//云台到世界坐标系的平移向量，旋转向量

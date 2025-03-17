@@ -18,6 +18,8 @@ CalibratePosition::CalibratePosition(const rclcpp::NodeOptions & options)
 
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+    tf_broadcaster_ = std::make_shared<tf2_ros::TransformBroadcaster>(this);
+
 
     // 订阅自定义消息
     armors_sub_ = this->create_subscription<auto_aim_interfaces::msg::Armors>(
@@ -30,7 +32,7 @@ CalibratePosition::CalibratePosition(const rclcpp::NodeOptions & options)
 void CalibratePosition::msgCallBack(const auto_aim_interfaces::msg::Armors& armors_msg){
     if(armors_msg.armors.size() != 1){
         RCLCPP_ERROR(this->get_logger(), "视野里有多个装甲板");
-        rclcpp::sleep_for(std::chrono::duration<int>(time_space));
+        rclcpp::sleep_for(std::chrono::milliseconds((time_space)));
         return;
     }
 
@@ -46,14 +48,18 @@ void CalibratePosition::msgCallBack(const auto_aim_interfaces::msg::Armors& armo
     } catch (const tf2::ExtrapolationException& ex) {
         // TF 数据不足，等待后续数据
         RCLCPP_WARN(this->get_logger(), "TF data not yet available: %s", ex.what());
-        rclcpp::sleep_for(std::chrono::duration<int>(time_space));
+        rclcpp::sleep_for(std::chrono::milliseconds((time_space)));
         return;    
     } catch (const tf2::LookupException& ex) {
         // 坐标系不存在或超时
         RCLCPP_ERROR(this->get_logger(), "TF error: %s", ex.what());
-        rclcpp::sleep_for(std::chrono::duration<int>(time_space));
+        rclcpp::sleep_for(std::chrono::milliseconds((time_space)));
         return;
     }
+
+    // transform.header.frame_id = world_frame;
+    // transform.child_frame_id = "test_frame";
+    // tf_broadcaster_->sendTransform(transform);
 
     tf2::Transform tf_transform;
     tf2::fromMsg(transform.transform, tf_transform);
@@ -67,40 +73,55 @@ void CalibratePosition::msgCallBack(const auto_aim_interfaces::msg::Armors& armo
     tf2::Matrix3x3 tf_m;
     tf_m.setRotation(q);
 
-    cv::Mat cv_m = cv::Mat::zeros(3, 3, CV_32FC1);
+    cv::Mat cv_m = cv::Mat::zeros(3, 3, CV_64FC1);
     for (int row = 0; row < 3; ++row) {
         for (int col = 0; col < 3; ++col) {
-            cv_m.at<float>(row, col) = tf_m[row][col];
+            double sign = (col == 1 || col == 2) ? -1.0 : 1.0;
+            cv_m.at<double>(row, col) = sign * tf_m[row][col];
+            // cv_m.at<double>(row, col) = tf_m[row][col];
         }
-      }
+    }
 
-    r_target2cam.push_back(cv_m);
-    t_target2cam.emplace_back(
+    cv::Mat t_m_1 = (cv::Mat_<double>(3, 1) <<         
         armors_msg.armors[0].pose.position.x,
         armors_msg.armors[0].pose.position.y,
         armors_msg.armors[0].pose.position.z
     );
+    r_target2cam.push_back(cv_m);
+    t_target2cam.push_back(t_m_1);
 
+    // std::cout << cv::determinant(cv_m) << std::endl;
+    // std::cout<<cv_m<<std::endl;
+    // std::cout<<t_m_1<<std::endl;
 
     q=tf_transform.getRotation();
     tf_m.setRotation(q);
     for (int row = 0; row < 3; ++row) {
         for (int col = 0; col < 3; ++col) {
-            cv_m.at<float>(row, col) = tf_m[row][col];
+            double sign = (col == 1 || col == 2) ? -1.0 : 1.0;
+            cv_m.at<double>(row, col) = sign * tf_m[row][col];
+            // cv_m.at<double>(row, col) = tf_m[row][col];
         }
       }
-    
-    r_gripper2base.push_back(cv_m);
-    t_gripper2base.emplace_back(
-        tf_transform.getOrigin()[0],
-        tf_transform.getOrigin()[0],
-        tf_transform.getOrigin()[0]
+    cv::Mat t_m_2 = (cv::Mat_<double>(3, 1) << 
+        tf_transform.getOrigin()[0], 
+        tf_transform.getOrigin()[1], 
+        tf_transform.getOrigin()[2]
     );
+    r_gripper2base.push_back(cv_m);
+    t_gripper2base.push_back(t_m_2);
+
+    // std::cout<<cv_m<<std::endl;
+    // std::cout<<t_m_2<<std::endl;
+    // std::cout << cv::determinant(cv_m) << std::endl;
+
+
+    RCLCPP_INFO(this->get_logger(), "Get and store the data");
 
     if(t_gripper2base.size() == date_length){
         cv::Mat t_cam2gripper, r_cam2gripper;
-        calibrateHandEye(r_target2cam, t_gripper2base, r_target2cam, t_target2cam, 
-            t_cam2gripper, r_cam2gripper, cv::CALIB_HAND_EYE_HORAUD);
+        cv::calibrateHandEye(r_gripper2base, t_gripper2base, r_target2cam, t_target2cam, 
+            r_cam2gripper, t_cam2gripper,  cv::CALIB_HAND_EYE_ANDREFF);
         // CALIB_HAND_EYE_TSAI	Tsai 方法 (1989)	经典方法，分离旋转和平移，对数据质量敏感。
         // CALIB_HAND_EYE_PARK	Park 方法 (1994)	改进的闭式解，适用于噪声较小的场景。
         // CALIB_HAND_EYE_HORAUD	Horaud 方法 (1995)	基于四元数的全局优化，对噪声鲁棒性较好。
@@ -108,28 +129,26 @@ void CalibratePosition::msgCallBack(const auto_aim_interfaces::msg::Armors& armo
         // CALIB_HAND_EYE_DANIILIDIS  Daniilidis 方法 (1999)	基于几何约束，适用于 Eye-in-Hand 和 Eye-to-Hand 两种配置。
 
         double pitch, yaw, roll;
-        if (r_cam2gripper.at<double>(2, 0) != 1 && r_cam2gripper.at<double>(2, 0) != -1) {
-            pitch = -asin(r_cam2gripper.at<double>(2, 0));
-            roll  = atan2(r_cam2gripper.at<double>(2, 1), r_cam2gripper.at<double>(2, 2));
-            yaw   = atan2(r_cam2gripper.at<double>(1, 0), r_cam2gripper.at<double>(0, 0));
-        } else {
-            //万向锁
-            yaw = 0;
-            if (r_cam2gripper.at<double>(2, 0) == -1) {
-                pitch = CV_PI / 2;
-                roll  = yaw + atan2(r_cam2gripper.at<double>(0, 1), r_cam2gripper.at<double>(0, 2));
-            } else {
-                pitch = -CV_PI / 2;
-                roll  = -yaw + atan2(-r_cam2gripper.at<double>(0, 1), -r_cam2gripper.at<double>(0, 2));
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) {
+                double sign = (col == 1 || col == 2) ? -1.0 : 1.0;
+                tf_m[row][col] = sign * r_cam2gripper.at<double>(row, col);
+                // tf_m[row][col] = r_cam2gripper.at<double>(row, col);
             }
         }
+        tf_m.getRPY(roll, pitch, yaw);
 
-        std::ofstream file(data_dir);
+        std::ofstream file;
+        file.open(data_dir, std::ios::out);
         if (!file.is_open()) {
-            RCLCPP_ERROR(this->get_logger(), "Failed to open file!");
+            RCLCPP_ERROR(this->get_logger(), "Failed to open file %s!", data_dir.c_str());
         }else{
-            file << "平移向量" << t_cam2gripper << std::endl;
-            file << "旋转欧拉角" << "pitch:" << pitch << "yaw:" << yaw << "roll:" << roll << std::endl;
+            RCLCPP_INFO(this->get_logger(), "Successed open file %s!", data_dir.c_str());
+            file << "平移向量" << std::endl << t_cam2gripper << std::endl;
+            file << "旋转欧拉角(弧度制)" << std::endl 
+                << "pitch: " << pitch << std::endl 
+                << "yaw: " << yaw << std::endl 
+                << "roll: " << roll << std::endl;
             file.close();
         }
         RCLCPP_INFO(this->get_logger(), "标定结束");
@@ -140,7 +159,37 @@ void CalibratePosition::msgCallBack(const auto_aim_interfaces::msg::Armors& armo
     // t_gripper2base
     // r_target2cam
     // t_target2cam
-    rclcpp::sleep_for(std::chrono::duration<int>(time_space));
+    rclcpp::sleep_for(std::chrono::milliseconds((time_space)));
+}
+
+cv::Mat sanitize_rotation(cv::Mat R) {
+    cv::Mat U, W, Vt;
+    cv::SVDecomp(R, W, U, Vt);
+    return U * Vt;
+}
+
+tf2::Matrix3x3 cvmat2tfmat(cv::Mat cv_m){
+    tf2::Matrix3x3 tf_m;
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            double sign = (col == 1 || col == 2) ? -1.0 : 1.0;
+            tf_m[row][col] = sign * cv_m.at<double>(row, col);
+            // tf_m[row][col] = r_cam2gripper.at<double>(row, col);
+        }
+    }
+    return tf_m;
+}
+
+cv::Mat tfmat2cvmat(tf2::Matrix3x3 tf_m){
+    cv::Mat cv_m = cv::Mat::zeros(3, 3, CV_64FC1);
+    for (int row = 0; row < 3; ++row) {
+        for (int col = 0; col < 3; ++col) {
+            double sign = (col == 1 || col == 2) ? -1.0 : 1.0;
+            cv_m.at<double>(row, col) = sign * tf_m[row][col];
+            // cv_m.at<double>(row, col) = tf_m[row][col];
+        }
+    }
+    return cv_m;
 }
 
 }

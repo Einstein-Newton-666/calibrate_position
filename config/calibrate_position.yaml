@@ -1,0 +1,9 @@
+/calibrate_position:
+  ros__parameters:
+    time_space: 10
+    date_length: 10
+    # data_dir: "../../../../src/calibrate_position/data.txt"
+    # data_dir: "package://ros2_galaxy_camera/data.txt"
+    armors_topic: /detector/armors
+    gimbal_frame: gimbal_link
+    world_frame: odom
