@@ -5,6 +5,7 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include "tf2_ros/transform_broadcaster.h"
+#include <tf2_ros/static_transform_broadcaster.h>
 
 
 #include "auto_aim_interfaces/msg/armor.hpp"
@@ -26,14 +27,18 @@ public:
 
 private:    
     void msgCallBack(const auto_aim_interfaces::msg::Armors& armors_msg);
-    cv::Mat sanitize_rotation(cv::Mat R);
     tf2::Matrix3x3 cvmat2tfmat(cv::Mat cv_m);
-    cv::Mat tfmat2cvmat(tf2::Matrix3x3 R);
+    cv::Mat tfmat2cvmat(tf2::Matrix3x3 tf_m);
+    cv::Mat tfvec2cvvec(tf2::Vector3 tf_v);
+    cv::Mat tfvec2cvvec(geometry_msgs::msg::Point tf_v);
+    geometry_msgs::msg::Point cvvec2tfvec(cv::Mat cv_v);
+
     
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
     rclcpp::Subscription<auto_aim_interfaces::msg::Armors>::SharedPtr armors_sub_;
     std::shared_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
+    std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_tf_broadcaster_;  //用于opencv和ros坐标系转换
 
     std::vector<cv::Mat>
         r_gripper2base, t_gripper2base,//云台到世界坐标系的平移向量，旋转向量

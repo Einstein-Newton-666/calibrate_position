@@ -53,5 +53,5 @@ def generate_launch_description():
     return LaunchDescription([
         calibrate_position_node,
         # delay_calibrate_position_node,
-        # calibrate_test_node
+        calibrate_test_node
         ])

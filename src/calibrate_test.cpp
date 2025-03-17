@@ -3,31 +3,26 @@
 #include <cmath>
 #include <random>
 
-#include "rclcpp/rclcpp.hpp"
+#include "calibrate_position/calibrate_position.hpp"
+
 #include "geometry_msgs/msg/point_stamped.hpp"
-#include "tf2_ros/transform_broadcaster.h"
 #include "tf2/LinearMath/Quaternion.h"
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <rclcpp/publisher.hpp>
-#include <tf2_ros/static_transform_broadcaster.h>
-#include <tf2_ros/transform_listener.h>
-#include <tf2_ros/buffer.h>
 #include <visualization_msgs/msg/marker_array.hpp>
 
-#include "auto_aim_interfaces/msg/armor.hpp"
-#include "auto_aim_interfaces/msg/armors.hpp"
+
 
 using namespace std::chrono_literals;
 
-//假设相机固定在云台离旋转中心30cm处，在云台旋转中心前方x=3m处有一装甲板，云台yaw轴从-30°到30°以60°每秒的速度来回摆动
+//假设相机固定在云台离旋转中心camera_gimbal处，在云台旋转中心前方armor_world_处有一装甲板，云台yaw轴从-30°到30°以60°每秒的速度来回摆动
 class GimbalController : public rclcpp::Node {
 public:
     GimbalController() 
     : Node("gimbal_controller"), 
-      offset_(0.3), 
-      armor_world_(3.0, 0.0, 0.0),
-      gen_(rd_()),
-      dist_(-0.01, 0.01)  // ±1% 均匀分布噪声
+        camera_gimbal(0.1, 0.005, 0.005, 0.1, 0.1, 0.1), 
+        armor_world_(3.0, 0.5, 0.5, 0, 0, 0),
+        gen_(rd_()),
+        dist_(-0.05, 0.05)  // ±5% 均匀分布噪声
     {
         armors_topic = this->declare_parameter<std::string>("armors_topic", "/detector/armors");
         gimbal_frame = this->declare_parameter<std::string>("gimbal_frame", "gimbal_link");
@@ -56,12 +51,16 @@ public:
         transform.header.frame_id = world_frame;
         transform.child_frame_id = "armor";
         
-        transform.transform.translation.x = std::get<0>(armor_world_);
-        transform.transform.translation.y = std::get<1>(armor_world_);
-        transform.transform.translation.z = std::get<2>(armor_world_);
+        transform.transform.translation.x = add_noise(std::get<0>(armor_world_));
+        transform.transform.translation.y = add_noise(std::get<1>(armor_world_));
+        transform.transform.translation.z = add_noise(std::get<2>(armor_world_));
         
         tf2::Quaternion q;
-        q.setRPY(0, 0, 0);  
+        q.setRPY(
+            add_noise(std::get<3>(camera_gimbal)), 
+            add_noise(std::get<4>(camera_gimbal)), 
+            add_noise(std::get<5>(camera_gimbal))
+        );  
         transform.transform.rotation.x = q.x();
         transform.transform.rotation.y = q.y();
         transform.transform.rotation.z = q.z();
@@ -124,12 +123,16 @@ private:
         transform.child_frame_id = "camera_frame";
         
         // 计算并添加平移噪声
-        transform.transform.translation.x = add_noise(offset_);
-        transform.transform.translation.y = 0.0;
-        transform.transform.translation.z = 0.0;
+        transform.transform.translation.x = add_noise(std::get<0>(camera_gimbal));
+        transform.transform.translation.y = add_noise(std::get<1>(camera_gimbal));
+        transform.transform.translation.z = add_noise(std::get<2>(camera_gimbal));
 
         // 设置旋转（添加角度噪声）
-        q.setRPY(0, 0, 0);
+        q.setRPY(
+            add_noise(std::get<3>(camera_gimbal)), 
+            add_noise(std::get<4>(camera_gimbal)), 
+            add_noise(std::get<5>(camera_gimbal))
+        );
         transform.transform.rotation.x = q.x();
         transform.transform.rotation.y = q.y();
         transform.transform.rotation.z = q.z();
@@ -205,8 +208,8 @@ private:
     }
 
     // 成员变量
-    const double offset_;
-    const std::tuple<double, double, double> armor_world_;
+    const std::tuple<double, double, double, double, double, double> camera_gimbal;
+    const std::tuple<double, double, double, double, double, double> armor_world_;
     std::string armors_topic;
     std::string gimbal_frame;
     std::string world_frame;
